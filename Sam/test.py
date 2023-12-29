@@ -6,9 +6,6 @@ import matplotlib.pyplot as plt
 import cv2
 import sys
 from matplotlib import cm
-import torch
-import torch.nn as nn
-import torch.optim as optim
 sys.path.append("..")
 from segment_anything import sam_model_registry, SamPredictor
 
@@ -58,34 +55,6 @@ label_data = label_img.get_fdata()
 num_slices = image_data.shape[-1]
 output_folder = "1" 
 os.makedirs(output_folder, exist_ok=True)
-
-class MultiClassDiceLoss(nn.Module):
-    def __init__(self, num_classes):
-        super(MultiClassDiceLoss, self).__init__()
-        self.num_classes = num_classes
-
-    def forward(self, batched_input, targets):
-        smooth = 1e-5
-
-        dice_loss = 0.0
-        for class_idx in range(1, self.num_classes + 1):
-            target = (targets == class_idx).float()
-            mask = sam(batched_input, multimask_output=False)
-
-            intersection = torch.sum(target * mask)
-            union = torch.sum(target) + torch.sum(mask) + smooth
-
-            dice_coefficient = (2.0 * intersection + smooth) / union
-            dice_loss -= dice_coefficient.log()
-
-        return dice_loss / self.num_classes
-
-
-num_classes = 13  # 你的类别数量
-model = YourSegmentationModel()  # 替换为你的分割模型
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-criterion = MultiClassDiceLoss(num_classes)
-
 for i in range(100, num_slices):
     h, w = label_data[:, :, i].shape
     index = []
@@ -110,6 +79,16 @@ for i in range(100, num_slices):
         image = ((image - np.min(image)) / (np.max(image) - np.min(image)) * 255).astype(np.uint8)
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         print(image.shape)
+        fig, ax = plt.subplots(1, 2, figsize=(20, 20))
+
+        ax[0].imshow(image,  cmap='gray')
+        for box in image_box:
+            show_box(np.array(box), ax[0])
+
+        ax[1].imshow(label_data[:, :, i], cmap='jet')
+        plt.tight_layout()
+        # plt.show()
+        save_path = os.path.join(output_folder, f'slice_{i + 1}.png')
         image_boxes = torch.tensor(image_box, device = sam.device)
         from segment_anything.utils.transforms import ResizeLongestSide
         resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
@@ -120,4 +99,23 @@ for i in range(100, num_slices):
             'original_size': image.shape[:2]
         },
         ]
+        batched_output = sam(batched_input, multimask_output=False)
+        for mask in batched_output[0]['masks']:
+            show_mask(mask.cpu().numpy(), ax[0], random_color=True)
+        plt.savefig(save_path)
+        plt.close()
+        # calc mDice 
+        mDice = 0
+        num = len(index)
+        for T in range(num) : 
+            label = np.zeros((h, w))
+            for j in range(h):
+                for k in range(w) : 
+                    if(label_data[j][k][i] == index[T]) : 
+                        label[j][k] = 1
+            print(np.sum(label), np.sum(batched_output[0]['masks'][T].cpu().numpy().sum()))
+            dice = np.sum(label * batched_output[0]['masks'][T].cpu().numpy()) * 2.0 / (np.sum(label) + np.sum(batched_output[0]['masks'][T].cpu().numpy()))
+            print(dice)
+            mDice += dice
+        mDice /= len(index)
         print("mDice : ", mDice)
