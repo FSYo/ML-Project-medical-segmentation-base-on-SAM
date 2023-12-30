@@ -2,6 +2,7 @@ import numpy as np
 import os
 import nibabel as nib
 import torch
+import torch.nn as nn
 import matplotlib.pyplot as plt
 import cv2
 import sys
@@ -16,6 +17,8 @@ device = "cpu"
 
 sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
 sam.to(device=device)
+optimizer = torch.optim.Adam(sam.parameters(), lr=1e-5)
+criterion = nn.CrossEntropyLoss() 
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -78,7 +81,7 @@ for i in range(100, num_slices):
         image = image_data[:, :, i]
         image = ((image - np.min(image)) / (np.max(image) - np.min(image)) * 255).astype(np.uint8)
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-        print(image.shape)
+        #print(image.shape)
         fig, ax = plt.subplots(1, 2, figsize=(20, 20))
 
         ax[0].imshow(image,  cmap='gray')
@@ -100,22 +103,39 @@ for i in range(100, num_slices):
         },
         ]
         batched_output = sam(batched_input, multimask_output=False)
+        mask_threshold = 0.0
         for mask in batched_output[0]['masks']:
-            show_mask(mask.cpu().numpy(), ax[0], random_color=True)
+            show_mask((mask > mask_threshold).cpu().numpy(), ax[0], random_color=True)
         plt.savefig(save_path)
         plt.close()
         # calc mDice 
         mDice = 0
         num = len(index)
+
+        optimizer.zero_grad()
+        sum_loss = torch.tensor(0.0)
+        print('image ', i, end = ':')
         for T in range(num) : 
             label = np.zeros((h, w))
             for j in range(h):
                 for k in range(w) : 
                     if(label_data[j][k][i] == index[T]) : 
                         label[j][k] = 1
-            print(np.sum(label), np.sum(batched_output[0]['masks'][T].cpu().numpy().sum()))
-            dice = np.sum(label * batched_output[0]['masks'][T].cpu().numpy()) * 2.0 / (np.sum(label) + np.sum(batched_output[0]['masks'][T].cpu().numpy()))
-            print(dice)
+
+            res = torch.sigmoid(batched_output[0]['masks'][T])[0]
+            # print(res.shape)
+            # print(label.shape)
+            # print(res)
+            # print(label)
+            loss = criterion(res, torch.tensor(label))
+            sum_loss += loss
+
+            answer = (batched_output[0]['masks'][T] > mask_threshold).cpu().numpy()
+            #print(np.sum(label), np.sum(answer))
+            dice = np.sum(label * answer) * 2.0 / (np.sum(label) + np.sum(answer))
+            print(dice, end=' ')
             mDice += dice
+        sum_loss.backward()
+        optimizer.step()
         mDice /= len(index)
-        print("mDice : ", mDice)
+        print("\nmDice : ", mDice)

@@ -108,27 +108,29 @@ class Sam(nn.Module):
                 boxes=image_record.get("boxes", None),
                 masks=image_record.get("mask_inputs", None),
             )
-            # MASK DECODER IS HERE 
-            low_res_masks, iou_predictions = self.mask_decoder(
-                image_embeddings=curr_embedding.unsqueeze(0),
-                image_pe=self.prompt_encoder.get_dense_pe(),
-                sparse_prompt_embeddings=sparse_embeddings,
-                dense_prompt_embeddings=dense_embeddings,
-                multimask_output=multimask_output,
-            )
-            masks = self.postprocess_masks(
-                low_res_masks,
-                input_size=image_record["image"].shape[-2:],
-                original_size=image_record["original_size"],
-            )
-            # masks = masks > self.mask_threshold
-            outputs.append(
-                {
-                    "masks": masks,
-                    "iou_predictions": iou_predictions,
-                    "low_res_logits": low_res_masks,
-                }
-            )
+            with torch.enable_grad():
+                # MASK DECODER IS HERE 
+                low_res_masks, iou_predictions = self.mask_decoder(
+                    image_embeddings=curr_embedding.unsqueeze(0),
+                    image_pe=self.prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=multimask_output,
+                )
+                masks = self.postprocess_masks(
+                    low_res_masks,
+                    input_size=image_record["image"].shape[-2:],
+                    original_size=image_record["original_size"],
+                )
+                print(masks.requires_grad)
+              #  masks = masks > self.mask_threshold
+                outputs.append(
+                    {
+                        "masks": masks,
+                        "iou_predictions": iou_predictions,
+                        "low_res_logits": low_res_masks,
+                    }
+                )
         return outputs
 
     def postprocess_masks(
