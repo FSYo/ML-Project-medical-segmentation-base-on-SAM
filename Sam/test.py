@@ -16,9 +16,8 @@ model_type = "vit_h"
 device = "cpu"
 
 sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+
 sam.to(device=device)
-optimizer = torch.optim.Adam(sam.parameters(), lr=1e-5)
-criterion = nn.CrossEntropyLoss() 
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -58,84 +57,92 @@ label_data = label_img.get_fdata()
 num_slices = image_data.shape[-1]
 output_folder = "1" 
 os.makedirs(output_folder, exist_ok=True)
-for i in range(100, num_slices):
-    h, w = label_data[:, :, i].shape
-    index = []
-    image_box = []
-    for l in range(1, 13) : 
-        boxes = [h, w, 0, 0]
-        for j in range(h):
-            for k in range(w) : 
-                if(label_data[j][k][i] == l) : 
-                    boxes[0] = min(boxes[0], j)
-                    boxes[1] = min(boxes[1], k)
-                    boxes[2] = max(boxes[2], j)
-                    boxes[3] = max(boxes[3], k)
-        if(boxes[0] == h) : 
-            continue
-        l1 = boxes[2] - boxes[0]
-        l2 = boxes[3] - boxes[1]
-        image_box.append([boxes[1], boxes[0], boxes[3], boxes[2]])
-        index.append(l)
-    if(len(image_box)) : 
-        image = image_data[:, :, i]
-        image = ((image - np.min(image)) / (np.max(image) - np.min(image)) * 255).astype(np.uint8)
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-        #print(image.shape)
-        fig, ax = plt.subplots(1, 2, figsize=(20, 20))
 
-        ax[0].imshow(image,  cmap='gray')
-        for box in image_box:
-            show_box(np.array(box), ax[0])
-
-        ax[1].imshow(label_data[:, :, i], cmap='jet')
-        plt.tight_layout()
-        # plt.show()
-        save_path = os.path.join(output_folder, f'slice_{i + 1}.png')
-        image_boxes = torch.tensor(image_box, device = sam.device)
-        from segment_anything.utils.transforms import ResizeLongestSide
-        resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
-        batched_input = [
-        {
-            'image': prepare_image(image, resize_transform, sam),
-            'boxes': resize_transform.apply_boxes_torch(image_boxes, image.shape[:2]),
-            'original_size': image.shape[:2]
-        },
-        ]
-        batched_output = sam(batched_input, multimask_output=False)
-        mask_threshold = 0.0
-        for mask in batched_output[0]['masks']:
-            show_mask((mask > mask_threshold).cpu().numpy(), ax[0], random_color=True)
-        plt.savefig(save_path)
-        plt.close()
-        # calc mDice 
-        mDice = 0
-        num = len(index)
-
-        optimizer.zero_grad()
-        sum_loss = torch.tensor(0.0)
-        print('image ', i, end = ':')
-        for T in range(num) : 
-            label = np.zeros((h, w))
+optimizer = torch.optim.Adam(sam.parameters(), lr=5e-6)
+criterion = nn.CrossEntropyLoss()
+num_epochs = 5
+for epoch in range(num_epochs):
+    torch.save(sam.state_dict(), 'epoch'+str(epoch)+sam_checkpoint)
+    for i in range(100, num_slices):
+        h, w = label_data[:, :, i].shape
+        index = []
+        image_box = []
+        for l in range(1, 13) : 
+            boxes = [h, w, 0, 0]
             for j in range(h):
                 for k in range(w) : 
-                    if(label_data[j][k][i] == index[T]) : 
-                        label[j][k] = 1
+                    if(label_data[j][k][i] == l) : 
+                        boxes[0] = min(boxes[0], j)
+                        boxes[1] = min(boxes[1], k)
+                        boxes[2] = max(boxes[2], j)
+                        boxes[3] = max(boxes[3], k)
+            if(boxes[0] == h) : 
+                continue
+            l1 = boxes[2] - boxes[0]
+            l2 = boxes[3] - boxes[1]
+            image_box.append([boxes[1], boxes[0], boxes[3], boxes[2]])
+            index.append(l)
+        if(len(image_box)) : 
+            image = image_data[:, :, i]
+            image = ((image - np.min(image)) / (np.max(image) - np.min(image)) * 255).astype(np.uint8)
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            #print(image.shape)
+            fig, ax = plt.subplots(1, 2, figsize=(20, 20))
 
-            res = torch.sigmoid(batched_output[0]['masks'][T])[0]
-            # print(res.shape)
-            # print(label.shape)
-            # print(res)
-            # print(label)
-            loss = criterion(res, torch.tensor(label))
-            sum_loss += loss
+            ax[0].imshow(image,  cmap='gray')
+            for box in image_box:
+                show_box(np.array(box), ax[0])
 
-            answer = (batched_output[0]['masks'][T] > mask_threshold).cpu().numpy()
-            #print(np.sum(label), np.sum(answer))
-            dice = np.sum(label * answer) * 2.0 / (np.sum(label) + np.sum(answer))
-            print(dice, end=' ')
-            mDice += dice
-        sum_loss.backward()
-        optimizer.step()
-        mDice /= len(index)
-        print("\nmDice : ", mDice)
+            ax[1].imshow(label_data[:, :, i], cmap='jet')
+            plt.tight_layout()
+            # plt.show()
+            save_path = os.path.join(output_folder, f'slice_{i + 1}.png')
+            image_boxes = torch.tensor(image_box, device = sam.device)
+            from segment_anything.utils.transforms import ResizeLongestSide
+            resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
+            batched_input = [
+            {
+                'image': prepare_image(image, resize_transform, sam),
+                'boxes': resize_transform.apply_boxes_torch(image_boxes, image.shape[:2]),
+                'original_size': image.shape[:2]
+            },
+            ]
+            batched_output = sam(batched_input, multimask_output=False)
+            mask_threshold = 0.0
+            for mask in batched_output[0]['masks']:
+                show_mask((mask > mask_threshold).cpu().numpy(), ax[0], random_color=True)
+            plt.savefig(save_path)
+            plt.close()
+            # calc mDice 
+            mDice = 0
+            num = len(index)
+
+            optimizer.zero_grad()
+            sum_loss = torch.tensor(0.0)
+            print('image ', i, end = ':')
+            for T in range(num) : 
+                label = np.zeros((h, w))
+                for j in range(h):
+                    for k in range(w) : 
+                        if(label_data[j][k][i] == index[T]) : 
+                            label[j][k] = 1
+
+                res = torch.sigmoid(batched_output[0]['masks'][T][0])
+                # print(res.shape)
+                # print(label.shape)
+                # print(res)
+                # print(label)
+                loss = criterion(res, torch.tensor(label))
+                sum_loss += loss
+
+                answer = (batched_output[0]['masks'][T] > mask_threshold).cpu().numpy()
+                #print(np.sum(label), np.sum(answer))
+                dice = np.sum(label * answer) * 2.0 / (np.sum(label) + np.sum(answer))
+                print(dice, end=' ')
+                mDice += dice
+            sum_loss.backward()
+            optimizer.step()
+            mDice /= len(index)
+            print("\nmDice : ", mDice)
+
+torch.save(sam.state_dict(), 'epoch'+str(num_epochs)+sam_checkpoint)
