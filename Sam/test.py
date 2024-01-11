@@ -8,15 +8,14 @@ import cv2
 import sys
 from matplotlib import cm
 import json
-import pandas as pd
 
 sys.path.append("..")
 from segment_anything import sam_model_registry, SamPredictor
 
-sam_checkpoint = "sam_vit_h_4b8939.pth"
+sam_checkpoint = "epoch5sam_vit_h_4b8939.pth"
 model_type = "vit_h"
 
-device = "cpu"
+device = "cuda"
 
 sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
 
@@ -50,11 +49,11 @@ def prepare_image(image, transform, device):
 # output_folder = "1" 
 # os.makedirs(output_folder, exist_ok=True)
 
-optimizer = torch.optim.Adam(sam.parameters(), lr=5e-6)
+optimizer = torch.optim.Adam(sam.parameters(), lr=1e-6)
 criterion = nn.CrossEntropyLoss()
 num_epochs = 5
-for epoch in range(num_epochs):
-    torch.save(sam.state_dict(), 'epoch'+str(epoch)+sam_checkpoint)
+for epoch in range(5, 15):
+    torch.save(sam.state_dict(), 'epoch_'+str(epoch)+sam_checkpoint)
     
     json_file_path = 'dataset_0.json'
 
@@ -67,8 +66,8 @@ for epoch in range(num_epochs):
             tot_mDice = 0
             tot_num = 0
             for tr_data in data["validation"] :
-                image_file_path = "../Training" + tr_data["img"]
-                label_file_path = "../Training" + tr_data["label"]
+                image_file_path = "../Training/" + tr_data["img"]
+                label_file_path = "../Training/" + tr_data["label"]
                 img = nib.load(image_file_path)
                 label_img = nib.load(label_file_path)
 
@@ -127,13 +126,24 @@ for epoch in range(num_epochs):
                         mDice /= len(index)
                         tot_mDice += mDice
                         tot_num += 1
+                        
                         print("\nmDice : ", mDice)
             print("Epoch : ", epoch)
             print("average mDice in validation test : ", tot_mDice / tot_num)    
 
+        SUM_LOSS = 0
+        SUM_DICE = 0
+        NUM = 0
+        datas = []
+        
         for tr_data in data["training"] :
-            image_file_path = "../Training" + tr_data["img"]
-            label_file_path = "../Training" + tr_data["label"]
+            datas.append(("../Training/" + tr_data["img"], "../Training/" + tr_data["label"]))
+        
+
+
+        for tr_data in data["training"] :
+            image_file_path = "../Training/" + tr_data["img"]
+            label_file_path = "../Training/" + tr_data["label"]
             img = nib.load(image_file_path)
             label_img = nib.load(label_file_path)
 
@@ -198,6 +208,7 @@ for epoch in range(num_epochs):
 
                     optimizer.zero_grad()
                     sum_loss = torch.tensor(0.0)
+                    sum_loss = sum_loss.to('cuda')
                     # print('image ', i, end = ':')
                     for T in range(num) : 
                         label = np.zeros((h, w))
@@ -209,20 +220,36 @@ for epoch in range(num_epochs):
                         res = torch.sigmoid(batched_output[0]['masks'][T][0])
                         # print(res.shape)
                         # print(label.shape)
-                        # print(res)
-                        # print(label)
-                        loss = criterion(res, torch.tensor(label))
-                        sum_loss += loss
+                # print(label)
+                     # print(res)
+                        label = torch.tensor(label)
+                        label = label.to('cuda')
+                        # from ipdb import set_trace
+                        # print(loss.device, sum_loss.device)
+                        
 
+                        smooth_dice = torch.sum(label * res) * 2 / (torch.sum(label) + torch.sum(res))
+                        sum_loss += 1 - smooth_dice
+ 
                         answer = (batched_output[0]['masks'][T] > mask_threshold).cpu().numpy()
+
+                        label = label.to('cpu')
+                        label = label.numpy()
+                        # answer = answer.to('cuda')
                         #print(np.sum(label), np.sum(answer))
                         dice = np.sum(label * answer) * 2.0 / (np.sum(label) + np.sum(answer))
                         print(dice, end=' ')
                         mDice += dice
+                    print("skip is here", sum_loss)
                     sum_loss.backward()
                     optimizer.step()
                     mDice /= len(index)
                     print("\nmDice : ", mDice)
                     print("LOSS : ", sum_loss)
+                    
+                    SUM_LOSS += sum_loss
+                    SUM_DICE += mDice
+                    NUM += 1 
+        print("ave loss and ave dice : ", SUM_LOSS / NUM, SUM_DICE / NUM)
                     
 torch.save(sam.state_dict(), 'epoch'+str(num_epochs)+sam_checkpoint)
