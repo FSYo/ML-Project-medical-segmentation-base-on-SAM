@@ -11,12 +11,7 @@ class ClassDecoder(nn.Module):
     def __init__(
         self,
         *,
-        transformer_dim: int,
-        transformer: nn.Module,
-        num_multimask_outputs: int = 3,
-        activation: Type[nn.Module] = nn.GELU,
-        iou_head_depth: int = 3,
-        iou_head_hidden_dim: int = 256,
+        mask_decoder : MaskDecoder,
         cls_head_depth: int = 3, 
         cls_head_hidden_dim: int = 256,
         n_classes: int = 14,
@@ -27,16 +22,6 @@ class ClassDecoder(nn.Module):
 
         Arguments:
           mask_decoder (MaskDecoder): initialed MaskDecoder to predict masks
-          transformer_dim (int): the channel dimension of the transformer
-          transformer (nn.Module): the transformer used to predict masks
-          num_multimask_outputs (int): the number of masks to predict
-            when disambiguating masks
-          activation (nn.Module): the type of activation to use when
-            upscaling masks
-          iou_head_depth (int): the depth of the MLP used to predict
-            mask quality
-          iou_head_hidden_dim (int): the hidden dimension of the MLP
-            used to predict mask quality
           cls_head_depth (int): the depth of the MLP used to predict
             mask class
           cls_head_hidden_dim (int): the hidden dimension of the MLP
@@ -44,32 +29,19 @@ class ClassDecoder(nn.Module):
           n_classes (int): number of classes
         """
         super().__init__()
-        self.transformer_dim = transformer_dim
-        self.transformer = transformer
+        self.transformer_dim = mask_decoder.transformer_dim
+        self.transformer = mask_decoder.transformer 
 
-        self.num_multimask_outputs = num_multimask_outputs
+        self.num_multimask_outputs = mask_decoder.num_multimask_outputs
 
-        self.iou_token = nn.Embedding(1, transformer_dim)
-        self.num_mask_tokens = num_multimask_outputs + 1
-        self.mask_tokens = nn.Embedding(self.num_mask_tokens, transformer_dim)
+        self.iou_token = mask_decoder.iou_token
+        self.num_mask_tokens = mask_decoder.num_mask_tokens
+        self.mask_tokens = mask_decoder.mask_tokens
 
-        self.output_upscaling = nn.Sequential(
-            nn.ConvTranspose2d(transformer_dim, transformer_dim // 4, kernel_size=2, stride=2),
-            LayerNorm2d(transformer_dim // 4),
-            activation(),
-            nn.ConvTranspose2d(transformer_dim // 4, transformer_dim // 8, kernel_size=2, stride=2),
-            activation(),
-        )
-        self.output_hypernetworks_mlps = nn.ModuleList(
-            [
-                MLP(transformer_dim, transformer_dim, transformer_dim // 8, 3)
-                for i in range(self.num_mask_tokens)
-            ]
-        )
+        self.output_upscaling = mask_decoder.output_upscaling
+        self.output_hypernetworks_mlps = mask_decoder.output_hypernetworks_mlps
 
-        self.iou_prediction_head = MLP(
-            transformer_dim, iou_head_hidden_dim, self.num_mask_tokens, iou_head_depth
-        )
+        self.iou_prediction_head = mask_decoder.iou_prediction_head
 
         device = self.iou_token.weight.device
 
