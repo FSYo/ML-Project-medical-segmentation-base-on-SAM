@@ -8,6 +8,8 @@
 
 `utils` ：数据集转换、模型训练、模型测试等工具
 
+训练时请将json, img, label均放入/dataset文件夹里
+
 ## TODO
 
 - [ ] 模型在分类任务上的表现test
